@@ -5,154 +5,140 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms as transforms
 from torchvision.datasets import ImageFolder
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
 import numpy
 import matplotlib
 import sklearn
-import time
-
 ##
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+torch.cuda.empty_cache()
 print(device)
 
 ##
-# Hyperparameters
-num_epochs = 10
-batch_size = 64
-learning_rate = 0.001
+trainData_root = "/Users/yanqingluo/Desktop/HTCVS2/split_data/train"  # 数据集的根文件夹
+testData_root = "/Users/yanqingluo/Desktop/HTCVS2/split_data/test"
 
-# Data preprocessing
+# 定义预处理转换
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),  # Resize the input images to a fixed size
-    transforms.ToTensor(),  # Convert images to tensors
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize the image tensors
+    transforms.Resize((224, 224)),  # 调整图像大小
+    transforms.ToTensor(),  # 转换为张量
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),  # 标准化
 ])
 
-# Load the datasets
-train_dataset = ImageFolder('/Users/yanqingluo/Desktop/HTCVS2/split_data/train', transform=transform)
-test_dataset = ImageFolder('/Users/yanqingluo/Desktop/HTCVS2/split_data/test', transform=transform)
+# 使用ImageFolder类加载数据集并应用预处理
+trainDataset = datasets.ImageFolder(root=trainData_root, transform=transform)
+testDataset = datasets.ImageFolder(root=testData_root, transform=transform)
+batch_size = 8
+shuffle = True
 
-# Data loaders
-train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False)
+# 创建data loader
+trainData_loader = DataLoader(trainDataset, batch_size=batch_size, shuffle=shuffle)
+testData_loader = DataLoader(testDataset, batch_size=batch_size, shuffle=shuffle)
 
-##
-model = torchvision.models.resnet18(pretrained=False)
-num_ftrs = model.fc.in_features
-model.fc = nn.Linear(num_ftrs, 10)
-model = model.to(device)
 
-# Loss and optimizer
+trainDataset_size = len(trainDataset)
+print("Train Dataset size:", trainDataset_size)
+testDataset_size = len(testDataset)
+print("Test Dataset size:", testDataset_size)
+num_train_classes = len(trainDataset.classes)
+print("Number of train classes:", num_train_classes)
+num_test_classes = len(testDataset.classes)
+print("Number of test classes:", num_test_classes)
+
+## model
+model = torchvision.models.resnet18(pretrained=False)  #如果要用pretrained，需要先安装ssl
+num_classes = 4
+model.fc = nn.Linear(model.fc.in_features, num_classes)
+## loss function
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-# Training loop
-def format_duration(seconds):
-    # Calculate the time components
-    components = [
-        ("w", seconds // 604800),  # 1 week is 604800 seconds
-        ("d", seconds // 86400 % 7),  # 1 day is 86400 seconds
-        ("h", seconds // 3600 % 24),  # 1 hour is 3600 seconds
-        ("min", seconds // 60 % 60),  # 1 minute is 60 seconds
-        ("s", round(seconds % 60, 2)),
-    ]
-
-    # Only include non-zero components
-    components = [(label, value) for label, value in components if value > 0]
-
-    # Format the string
-    return ", ".join(f"{value}{label}" for label, value in components)
+##optimizer
+optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
 
-def print_phase_info(is_training, epoch, total_loss, correct_prediction_count, start_time):
-    dataset_length = len(
-        training_data_loader.dataset if is_training else testing_data_loader.dataset
-    )
-    phase_duration = format_duration(time.time() - (training_start_time if is_training else testing_start_time))
-    total_duration = format_duration(time.time() - start_time)
+###
+num_epochs = 5
+learning_rate = 0.001
 
-    print("    {} Epoch {} done. Loss: {:.2f}, Accuracy: {:.2f}%, Phase Duration: {}, Total Duration: {}".format(
-        "Training" if is_training else "Testing",
-        epoch,
-        total_loss / dataset_length,
-        (correct_prediction_count / dataset_length) * 100.0,
-        phase_duration,
-        total_duration
-    ))
-start_time = time.time()
-
-for epoch in range(epoch_count):
-    epoch_start_time = time.time()
-    print("Epoch {} running.".format(epoch))
-
-    # Training Phase
-    training_start_time = time.time()
+# Loop over the dataset for the specified number of epochs
+for epoch in range(num_epochs):
+    # Set the model to training mode
     model.train()
-    total_loss = 0.0
-    correct_prediction_count = 0
 
-    for inputs, targets in training_data_loader:
+    # Initialize variables to track loss and accuracy
+    total_loss_train = 0.0
+    correct_predictions_train = 0
+
+    # Loop over the training dataset in batches
+    for inputs, targets in trainData_loader:
+        # Move the inputs and targets to the device
         inputs = inputs.to(device)
         targets = targets.to(device)
 
+        # Clear the gradients
+        optimizer.zero_grad()
+
         # Forward pass
         outputs = model(inputs)
-        _, predictions = torch.max(outputs, 1)
+
+        # Compute the loss
         loss = criterion(outputs, targets)
 
-        # Back-propagation
-        optimizer.zero_grad()
+        # Backward pass
         loss.backward()
+
+        # Update the weights and biases
         optimizer.step()
 
-        total_loss += loss.item() * inputs.size(0)
-        correct_prediction_count += torch.sum(predictions == targets.data)
+        # Update the total loss
+        total_loss_train += loss.item() * inputs.size(0)
 
-    print_phase_info(True, total_loss, correct_prediction_count)
+        # Calculate the number of correct predictions
+        _, predicted = torch.max(outputs.data, 1)
+        correct_predictions_train += (predicted == targets).sum().item()
 
-    # Testing Phase
-    testing_start_time = time.time()
-    model.eval()
-    with torch.no_grad():
-        total_loss = 0.0
-        correct_prediction_count = 0
+    # Calculate the average loss and accuracy for the epoch
+    average_loss = total_loss_train / trainDataset_size
+    accuracy = correct_predictions_train / trainDataset_size * 100.0
 
-        for inputs, targets in testing_data_loader:
-            inputs = inputs.to(device)
-            targets = targets.to(device)
-
-            outputs = model(inputs)
-            _, predictions = torch.max(outputs, 1)
-            loss = criterion(outputs, targets)
-
-            total_loss += loss.item() * inputs.size(0)
-            correct_prediction_count += torch.sum(predictions == targets.data)
-
-        print_phase_info(False, total_loss, correct_prediction_count)
-
-    print("Epoch {} done. Epoch Duration: {}, Total Duration: {}".format(
-        epoch,
-        format_duration(time.time() - epoch_start_time),
-        format_duration(time.time() - start_time)
-    ))
-    print("--------------------------------------------")
-
+    # Print the epoch information
+    print("Train Epoch [{}/{}], Train Loss: {:.4f}, Train Accuracy: {:.2f}%".format(epoch+1, num_epochs, average_loss, accuracy))
 
 ##
-model.eval()
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+import numpy as np
+
+model.eval()  # 将模型设置为评估模式
+
+# 初始化变量以跟踪预测结果和真实标签
+all_predictions = []
+all_targets = []
+
+# 禁用梯度计算
 with torch.no_grad():
-    inputs, targets = next(iter(torch.utils.data.DataLoader(testing_data, batch_size=len(testing_data))))
-    inputs = inputs.to(device)
-    outputs = model(inputs)
-    _, predictions = torch.max(outputs, 1)
-    confusion_matrix = sklearn.metrics.confusion_matrix(targets, predictions)
-    overall_accuracy = confusion_matrix.trace() / confusion_matrix.sum()
-    average_accuracy = (confusion_matrix.diagonal() / confusion_matrix.sum(axis=1)).mean()
+    for inputs, targets in testData_loader:
+        inputs = inputs.to(device)
+        targets = targets.to(device)
 
-    confusion_matrix_display = sklearn.metrics.ConfusionMatrixDisplay(confusion_matrix=confusion_matrix)
-    confusion_matrix_display.plot()
-    plt.title("Confusion Matrix")
-    plt.show()
+        # 前向传播
+        outputs = model(inputs)
+        _, predicted = torch.max(outputs.data, 1)
 
-    print("Overall accuracy: {:.2f}%".format(overall_accuracy * 100))
-    print("Average accuracy: {:.2f}%".format(average_accuracy * 100))
+        # 保存预测结果和真实标签
+        all_predictions.extend(predicted.cpu().numpy())
+        all_targets.extend(targets.cpu().numpy())
 
+# 生成混淆矩阵
+confusion = confusion_matrix(all_targets, all_predictions)
+
+# 显示混淆矩阵
+plt.figure(figsize=(10, 8))
+plt.imshow(confusion, cmap='Blues')
+plt.colorbar()
+plt.xticks(np.arange(len(trainDataset.classes)), trainDataset.classes, rotation=90)
+plt.yticks(np.arange(len(testDataset.classes)), testDataset.classes)
+plt.xlabel('Predicted')
+plt.ylabel('True')
+plt.title('Confusion Matrix')
+plt.show()
